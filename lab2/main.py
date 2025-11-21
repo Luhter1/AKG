@@ -3,7 +3,7 @@ from tkinter import messagebox, filedialog
 from PIL import Image, ImageTk, ImageFilter, ImageEnhance
 import os
 
-FILENAME   = "image1.jpg"  # картинка рядом со скриптом
+FILENAME   = "image1.png"  # картинка рядом со скриптом
 MAX_WIDTH  = 500
 MAX_HEIGHT = 400
 
