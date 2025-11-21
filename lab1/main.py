@@ -15,7 +15,8 @@ class App:
         self.root = tk.Tk()
         self.i = 0
 
-        top = tk.Frame(self.root); top.pack(anchor="w", fill="x")
+        top = tk.Frame(self.root)
+        top.pack(anchor="w", fill="x")
         tk.Label(top, text="Капарулин Тимофей P3308", font=("Menlo", 13, "bold")).pack(side="left", padx=12)
         tk.Button(top, text="Далее", command=self.next_image).pack(side="left", padx=6, pady=6)
         self.info = tk.Label(top, text="", justify="left", font=("Menlo", 11))
