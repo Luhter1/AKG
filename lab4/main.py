@@ -128,13 +128,13 @@ class BlinnPhongModel:
 
 #   Рендерер сцены: построение изображения сферы
 class Renderer:
-    def __init__(self, screen_w, screen_h, res_w, res_h,
+    def __init__(self, screen_width, screen_height, screen_w_res, screen_h_res, 
                  observer_z, sphere, lights, material):
 
-        self.screen_width = float(screen_w)
-        self.screen_height = float(screen_h)
-        self.res_w = int(res_w)
-        self.res_h = int(res_h)
+        self.screen_width = float(screen_width)
+        self.screen_height = float(screen_height)
+        self.screen_w_res = int(screen_w_res)
+        self.screen_h_res = int(screen_h_res)
 
         # камера расположена по оси Z
         self.observer = np.array([0.0, 0.0, float(observer_z)])
@@ -144,8 +144,8 @@ class Renderer:
         self.material = material
 
         # реальный размер пикселя в мм
-        self.pixel_w = self.screen_width / self.res_w
-        self.pixel_h = self.screen_height / self.res_h
+        self.pixel_width = self.screen_width / self.screen_w_res
+        self.pixel_height = self.screen_height / self.screen_h_res
 
     def calculate_intensity_at_point(self, point):
         normal = self.sphere.get_normal(point)
@@ -217,20 +217,23 @@ class Renderer:
     
     # ---------------------------------------------------------
     def render(self):
-        """Основной рендер: трассировка лучей от камеры к экрану."""
-        image = np.zeros((self.res_h, self.res_w), dtype=float)
+        """Основной рендер: трассировка лучей от камеры к экрану"""
+        image = np.zeros((self.screen_h_res, self.screen_w_res), dtype=float)
 
-        for y in range(self.res_h):
-            for x in range(self.res_w):
+        for y in range(self.screen_h_res):
+            for x in range(self.screen_w_res):
 
                 # координаты точки на виртуальном экране (в мм)
-                sx = (x + 0.5) * self.pixel_w - self.screen_width / 2
-                sy = -(y + 0.5) * self.pixel_h + self.screen_height / 2
-                screen_point = np.array([sx, sy, 0.0])
+                screen_x = (x + 0.5) * self.pixel_width - self.screen_width / 2.0
+                screen_y = -(y + 0.5) * self.pixel_height + self.screen_height / 2.0
+                screen_point = np.array([screen_x, screen_y, 0.0])
 
                 # луч: от наблюдателя к экрану
                 direction = screen_point - self.observer
-                direction /= np.linalg.norm(direction)
+                direction_norm = np.linalg.norm(direction)
+                if direction_norm < 1e-10:
+                    continue
+                direction = direction / direction_norm
 
                 # пересечение со сферой
                 hit = self.sphere.intersect_ray(self.observer, direction)
