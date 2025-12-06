@@ -2,268 +2,194 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 import numpy as np
 from PIL import Image, ImageTk
-import os
 
 
+
+#   Класс точечного источника света
 class PointLight:
     def __init__(self, x, y, z, intensity):
+        # Позиция источника света в 3D
         self.position = np.array([x, y, z], dtype=float)
+        # Сила излучения (Вт/ср)
         self.intensity = float(intensity)
-    
+
     def get_direction_to(self, point):
+        """Направление от источника к точке (нормализованный вектор)."""
         direction = point - self.position
-        distance = np.linalg.norm(direction)
-        if distance < 1e-10:
-            return np.array([0.0, 0.0, 0.0])
-        return direction / distance
-    
+        dist = np.linalg.norm(direction)
+        if dist < 1e-10:
+            return np.zeros(3)
+        return direction / dist
+
     def get_distance_to(self, point):
+        """Расстояние от источника до точки."""
         return np.linalg.norm(point - self.position)
-    
-    def get_lambert_intensity(self, point, normal):
-        direction = self.get_direction_to(point)
-        distance = self.get_distance_to(point)
-        
-        if distance < 1e-10:
-            return 0.0
-        
-        cos_theta = np.dot(-direction, normal)
-        cos_theta = max(0.0, cos_theta)
-        
-        attenuation = 1.0 / (distance * distance)
-        return self.intensity * cos_theta * attenuation
 
 
+
+#   Класс сферы — задаёт геометрию и пересечение с лучом
 class Sphere:
-    def __init__(self, center_x, center_y, center_z, radius):
-        self.center = np.array([center_x, center_y, center_z], dtype=float)
+    def __init__(self, cx, cy, cz, radius):
+        self.center = np.array([cx, cy, cz], dtype=float)
         self.radius = float(radius)
-    
+
     def get_normal(self, point):
+        """Вычисляем нормаль поверхности как (P - С) / R."""
         normal = point - self.center
-        norm = np.linalg.norm(normal)
-        if norm < 1e-10:
+        n = np.linalg.norm(normal)
+        if n < 1e-10:
             return np.array([0.0, 0.0, 1.0])
-        return normal / norm
-    
+        return normal / n
+
     def intersect_ray(self, origin, direction):
+        """
+        Пересечение луча со сферой.
+        Решаем квадратное уравнение.
+        Возвращаем ближайшую положительную точку пересечения.
+        """
+
         oc = origin - self.center
         a = np.dot(direction, direction)
         b = 2.0 * np.dot(oc, direction)
-        c = np.dot(oc, oc) - self.radius * self.radius
-        discriminant = b * b - 4 * a * c
-        
-        if discriminant < 0:
+        c = np.dot(oc, oc) - self.radius**2
+
+        disc = b*b - 4*a*c
+        if disc < 0:
             return None
-        
-        sqrt_disc = np.sqrt(discriminant)
+
+        sqrt_disc = np.sqrt(disc)
         t1 = (-b - sqrt_disc) / (2 * a)
         t2 = (-b + sqrt_disc) / (2 * a)
-        
+
+        # выбираем ближайшее положительное решение
         t = min(t1, t2) if t1 > 0 else (t2 if t2 > 0 else None)
-        
-        if t is None or t < 0:
+        if t is None:
             return None
-        
+
         return origin + t * direction
 
 
+
+#   Модель освещения Блинна–Фонга
 class BlinnPhongModel:
-    def __init__(self, ka, kd, ks, n):
-        self.ka = float(ka)
-        self.kd = float(kd)
-        self.ks = float(ks)
-        self.n = float(n)
-    
+    def __init__(self, ka, kd, ks, shininess):
+        self.ka = float(ka)  # ambient
+        self.kd = float(kd)  # diffuse
+        self.ks = float(ks)  # specular
+        self.n = float(shininess)
+
     def calculate_intensity(self, point, normal, view_dir, lights):
+        """
+        Основная формула Блинна–Фонга:
+        I = ka + Σ ( kd*(N·L) + ks*(N·H)^n ) * atten
+        где H = (L+V)/|L+V|
+        """
+
         ambient = self.ka
-        
-        view_dir_norm = np.linalg.norm(view_dir)
-        if view_dir_norm > 1e-10:
-            view_dir_normalized = view_dir / view_dir_norm
-        else:
-            view_dir_normalized = view_dir
-        
         diffuse = 0.0
         specular = 0.0
-        
+
+        # нормализуем направление на наблюдателя
+        v = view_dir / np.linalg.norm(view_dir)
+
         for light in lights:
-            light_to_point = light.get_direction_to(point)
-            distance = light.get_distance_to(point)
-            
-            if distance < 1e-10:
+
+            # направление: от точки к источнику
+            L = light.get_direction_to(point)
+            d = light.get_distance_to(point)
+
+            if d < 1e-10:
                 continue
-            
-            light_dir_norm = np.linalg.norm(light_to_point)
-            if light_dir_norm > 1e-10:
-                light_dir_normalized = light_to_point / light_dir_norm
-                light_dir = -light_dir_normalized
-            else:
-                continue
-            
-            light_emission_direction = np.array([0.0, 0.0, -1.0])
-            cos_theta_emission = np.dot(light_dir_normalized, light_emission_direction)
-            cos_theta_emission = max(0.0, cos_theta_emission)
-            
-            cos_theta = np.dot(light_dir, normal)
-            cos_theta = max(0.0, cos_theta)
-            
-            min_distance = 10.0
-            safe_distance = max(distance, min_distance)
-            attenuation_factor = 1.0 / (safe_distance * safe_distance)
-            light_intensity_attenuated = light.intensity * cos_theta_emission * attenuation_factor
-            
-            diffuse += self.kd * light_intensity_attenuated * cos_theta
-            
-            if cos_theta > 0:
-                half_vector = view_dir_normalized + light_dir
-                half_norm = np.linalg.norm(half_vector)
-                if half_norm > 1e-10:
-                    half_vector = half_vector / half_norm
-                    cos_alpha = np.dot(half_vector, normal)
-                    cos_alpha = max(0.0, cos_alpha)
-                    specular += self.ks * light_intensity_attenuated * (cos_alpha ** self.n)
-        
-        total = ambient + diffuse + specular
-        return max(0.0, total)
+
+            # вектор в сторону источника света
+            L = -L  # инверсия (луч от точки к свету)
+
+            # диффузная компонента (Ламберта)
+            ndotl = max(0.0, np.dot(normal, L))
+
+            # ослабление (1/r²) — реалистичное поведение
+            atten = 1.0 / (d * d)
+
+            # добавляем diffuse
+            diffuse += light.intensity * self.kd * ndotl * atten
+
+            # спекулярная компонента
+            if ndotl > 0:
+                H = v + L
+                H_norm = np.linalg.norm(H)
+                if H_norm > 1e-10:
+                    H /= H_norm
+                    ndoth = max(0.0, np.dot(normal, H))
+                    specular += light.intensity * self.ks * (ndoth ** self.n) * atten
+
+        return max(0.0, ambient + diffuse + specular)
 
 
+
+#   Рендерер сцены: построение изображения сферы
 class Renderer:
-    def __init__(self, screen_width, screen_height, screen_w_res, screen_h_res, 
+    def __init__(self, screen_w, screen_h, res_w, res_h,
                  observer_z, sphere, lights, material):
-        self.screen_width = float(screen_width)
-        self.screen_height = float(screen_height)
-        self.screen_w_res = int(screen_w_res)
-        self.screen_h_res = int(screen_h_res)
+
+        self.screen_width = float(screen_w)
+        self.screen_height = float(screen_h)
+        self.res_w = int(res_w)
+        self.res_h = int(res_h)
+
+        # камера расположена по оси Z
         self.observer = np.array([0.0, 0.0, float(observer_z)])
+
         self.sphere = sphere
         self.lights = lights
         self.material = material
-        
-        self.pixel_width = self.screen_width / self.screen_w_res
-        self.pixel_height = self.screen_height / self.screen_h_res
-    
-    def calculate_intensity_at_point(self, point):
-        normal = self.sphere.get_normal(point)
-        direction_to_observer = self.observer - point
-        direction_norm = np.linalg.norm(direction_to_observer)
-        if direction_norm < 1e-10:
-            view_dir = np.array([0.0, 0.0, 1.0])
-        else:
-            view_dir = direction_to_observer / direction_norm
-        
-        intensity = self.material.calculate_intensity(
-            point, normal, view_dir, self.lights
-        )
-        return intensity
-    
-    def get_three_points_on_sphere(self):
-        center = self.sphere.center
-        radius = self.sphere.radius
-        
-        point1 = center + np.array([radius, 0.0, 0.0])
-        point2 = center + np.array([0.0, radius, 0.0])
-        point3 = center + np.array([0.0, 0.0, radius])
-        
-        return point1, point2, point3
-    
-    def calculate_statistics(self):
-        point1, point2, point3 = self.get_three_points_on_sphere()
-        
-        intensity1 = self.calculate_intensity_at_point(point1)
-        intensity2 = self.calculate_intensity_at_point(point2)
-        intensity3 = self.calculate_intensity_at_point(point3)
-        
-        image = np.zeros((self.screen_h_res, self.screen_w_res), dtype=float)
-        
-        for y in range(self.screen_h_res):
-            for x in range(self.screen_w_res):
-                screen_x = (x + 0.5) * self.pixel_width - self.screen_width / 2.0
-                screen_y = -(y + 0.5) * self.pixel_height + self.screen_height / 2.0
-                screen_point = np.array([screen_x, screen_y, 0.0])
-                
-                direction = screen_point - self.observer
-                direction_norm = np.linalg.norm(direction)
-                if direction_norm < 1e-10:
-                    continue
-                direction = direction / direction_norm
-                
-                intersection = self.sphere.intersect_ray(self.observer, direction)
-                
-                if intersection is not None:
-                    normal = self.sphere.get_normal(intersection)
-                    view_dir = -direction
-                    
-                    intensity = self.material.calculate_intensity(
-                        intersection, normal, view_dir, self.lights
-                    )
-                    
-                    image[y, x] = intensity
-        
-        max_intensity = np.max(image)
-        min_intensity = np.min(image[image > 0]) if np.any(image > 0) else 0.0
-        
-        return {
-            'point1': {'point': point1, 'intensity': intensity1},
-            'point2': {'point': point2, 'intensity': intensity2},
-            'point3': {'point': point3, 'intensity': intensity3},
-            'max_intensity': max_intensity,
-            'min_intensity': min_intensity
-        }
-    
+
+        # реальный размер пикселя в мм
+        self.pixel_w = self.screen_width / self.res_w
+        self.pixel_h = self.screen_height / self.res_h
+
+    # ---------------------------------------------------------
     def render(self):
-        image = np.zeros((self.screen_h_res, self.screen_w_res), dtype=float)
-        
-        for y in range(self.screen_h_res):
-            for x in range(self.screen_w_res):
-                screen_x = (x + 0.5) * self.pixel_width - self.screen_width / 2.0
-                screen_y = -(y + 0.5) * self.pixel_height + self.screen_height / 2.0
-                screen_point = np.array([screen_x, screen_y, 0.0])
-                
+        """Основной рендер: трассировка лучей от камеры к экрану."""
+        image = np.zeros((self.res_h, self.res_w), dtype=float)
+
+        for y in range(self.res_h):
+            for x in range(self.res_w):
+
+                # координаты точки на виртуальном экране (в мм)
+                sx = (x + 0.5) * self.pixel_w - self.screen_width / 2
+                sy = -(y + 0.5) * self.pixel_h + self.screen_height / 2
+                screen_point = np.array([sx, sy, 0.0])
+
+                # луч: от наблюдателя к экрану
                 direction = screen_point - self.observer
-                direction_norm = np.linalg.norm(direction)
-                if direction_norm < 1e-10:
+                direction /= np.linalg.norm(direction)
+
+                # пересечение со сферой
+                hit = self.sphere.intersect_ray(self.observer, direction)
+                if hit is None:
                     continue
-                direction = direction / direction_norm
-                
-                intersection = self.sphere.intersect_ray(self.observer, direction)
-                
-                if intersection is not None:
-                    normal = self.sphere.get_normal(intersection)
-                    view_dir = -direction
-                    
-                    intensity = self.material.calculate_intensity(
-                        intersection, normal, view_dir, self.lights
-                    )
-                    
-                    image[y, x] = intensity
-        
-        max_intensity = np.max(image)
-        min_intensity = np.min(image[image > 0]) if np.any(image > 0) else 0
-        
-        if max_intensity > 1e-10:
-            if max_intensity - min_intensity > 1e-6:
-                image_shifted = image - min_intensity
-                image_shifted = np.maximum(image_shifted, 0.0)
-                scale_factor = 50.0 / max_intensity
-                image_scaled = image_shifted * scale_factor
-                image_log = np.log1p(image_scaled)
-                max_log = np.log1p((max_intensity - min_intensity) * scale_factor)
-                if max_log > 1e-10:
-                    image_normalized = image_log / max_log
-                else:
-                    image_normalized = image_log
-            else:
-                image_normalized = image / max_intensity
-            image_normalized = np.clip(image_normalized, 0.0, 1.0)
-            image = (image_normalized * 255.0).astype(np.uint8)
+
+                # нормаль и направление взгляда
+                normal = self.sphere.get_normal(hit)
+                view_dir = -direction
+
+                # интенсивность по Блинн–Фонгу
+                image[y, x] = self.material.calculate_intensity(
+                    hit, normal, view_dir, self.lights
+                )
+
+        # нормируем изображение в диапазон 0..255
+        max_i = image.max()
+        if max_i > 1e-10:
+            img_norm = (image / max_i) * 255.0
         else:
-            image = np.zeros_like(image, dtype=np.uint8)
-        
-        return Image.fromarray(image, mode='L')
+            img_norm = np.zeros_like(image)
+
+        return Image.fromarray(img_norm.astype(np.uint8), 'L')
 
 
 class ParameterControl:
+    """GUI-элемент: label + slider + entry"""
     def __init__(self, parent, label, min_val, max_val, default_val, 
                  resolution=1.0, callback=None):
         parent_bg = parent.cget('bg') if hasattr(parent, 'cget') else '#ffffff'
@@ -341,6 +267,7 @@ class ParameterControl:
 
 
 class App:
+    """Графический интерфейс приложения"""
     def __init__(self, master):
         self.master = master
         master.title("Расчет яркости на сфере")
