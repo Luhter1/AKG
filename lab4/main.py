@@ -147,6 +147,74 @@ class Renderer:
         self.pixel_w = self.screen_width / self.res_w
         self.pixel_h = self.screen_height / self.res_h
 
+    def calculate_intensity_at_point(self, point):
+        normal = self.sphere.get_normal(point)
+        direction_to_observer = self.observer - point
+        direction_norm = np.linalg.norm(direction_to_observer)
+        if direction_norm < 1e-10:
+            view_dir = np.array([0.0, 0.0, 1.0])
+        else:
+            view_dir = direction_to_observer / direction_norm
+        
+        intensity = self.material.calculate_intensity(
+            point, normal, view_dir, self.lights
+        )
+        return intensity
+    
+    def get_three_points_on_sphere(self):
+        center = self.sphere.center
+        radius = self.sphere.radius
+        
+        point1 = center + np.array([radius, 0.0, 0.0])
+        point2 = center + np.array([0.0, radius, 0.0])
+        point3 = center + np.array([0.0, 0.0, radius])
+        
+        return point1, point2, point3
+    
+    def calculate_statistics(self):
+        point1, point2, point3 = self.get_three_points_on_sphere()
+        
+        intensity1 = self.calculate_intensity_at_point(point1)
+        intensity2 = self.calculate_intensity_at_point(point2)
+        intensity3 = self.calculate_intensity_at_point(point3)
+        
+        image = np.zeros((self.screen_h_res, self.screen_w_res), dtype=float)
+        
+        for y in range(self.screen_h_res):
+            for x in range(self.screen_w_res):
+                screen_x = (x + 0.5) * self.pixel_width - self.screen_width / 2.0
+                screen_y = -(y + 0.5) * self.pixel_height + self.screen_height / 2.0
+                screen_point = np.array([screen_x, screen_y, 0.0])
+                
+                direction = screen_point - self.observer
+                direction_norm = np.linalg.norm(direction)
+                if direction_norm < 1e-10:
+                    continue
+                direction = direction / direction_norm
+                
+                intersection = self.sphere.intersect_ray(self.observer, direction)
+                
+                if intersection is not None:
+                    normal = self.sphere.get_normal(intersection)
+                    view_dir = -direction
+                    
+                    intensity = self.material.calculate_intensity(
+                        intersection, normal, view_dir, self.lights
+                    )
+                    
+                    image[y, x] = intensity
+        
+        max_intensity = np.max(image)
+        min_intensity = np.min(image[image > 0]) if np.any(image > 0) else 0.0
+        
+        return {
+            'point1': {'point': point1, 'intensity': intensity1},
+            'point2': {'point': point2, 'intensity': intensity2},
+            'point3': {'point': point3, 'intensity': intensity3},
+            'max_intensity': max_intensity,
+            'min_intensity': min_intensity
+        }
+    
     # ---------------------------------------------------------
     def render(self):
         """Основной рендер: трассировка лучей от камеры к экрану."""
@@ -179,13 +247,29 @@ class Renderer:
                 )
 
         # нормируем изображение в диапазон 0..255
-        max_i = image.max()
-        if max_i > 1e-10:
-            img_norm = (image / max_i) * 255.0
+        max_intensity = np.max(image)
+        min_intensity = np.min(image[image > 0]) if np.any(image > 0) else 0
+        
+        if max_intensity > 1e-10:
+            if max_intensity - min_intensity > 1e-6:
+                image_shifted = image - min_intensity
+                image_shifted = np.maximum(image_shifted, 0.0)
+                scale_factor = 50.0 / max_intensity
+                image_scaled = image_shifted * scale_factor
+                image_log = np.log1p(image_scaled)
+                max_log = np.log1p((max_intensity - min_intensity) * scale_factor)
+                if max_log > 1e-10:
+                    image_normalized = image_log / max_log
+                else:
+                    image_normalized = image_log
+            else:
+                image_normalized = image / max_intensity
+            image_normalized = np.clip(image_normalized, 0.0, 1.0)
+            image = (image_normalized * 255.0).astype(np.uint8)
         else:
-            img_norm = np.zeros_like(image)
-
-        return Image.fromarray(img_norm.astype(np.uint8), 'L')
+            image = np.zeros_like(image, dtype=np.uint8)
+        
+        return Image.fromarray(image, mode='L')
 
 
 class ParameterControl:
