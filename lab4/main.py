@@ -599,10 +599,16 @@ class App:
     def display_image(self, pil_image):
         max_display_size = 600
         w, h = pil_image.size
+
+        try:
+            resample = Image.Resampling.LANCZOS
+        except AttributeError:
+            # Для старых версий Pillow
+            resample = Image.LANCZOS
         
         scale = min(max_display_size / w, max_display_size / h, 1.0)
         new_size = (int(w * scale), int(h * scale))
-        display_image = pil_image.resize(new_size, Image.Resampling.LANCZOS)
+        display_image = pil_image.resize(new_size, resample)
         
         photo = ImageTk.PhotoImage(display_image)
         self.image_label.config(image=photo, text="")
